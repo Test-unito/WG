@@ -1,0 +1,161 @@
+name: PR → Issue Linker (smart)
+
+on:
+  workflow_call:
+    secrets:
+      CROSS_REPO_TOKEN:
+        required: true
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+env:
+  LOG_PREFIX: "[PR-Linker]"
+
+jobs:
+  link:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Validate inputs
+        id: validate
+        run: |
+          echo "${{ env.LOG_PREFIX }} Starting validation..."
+          BODY="${{ github.event.pull_request.body }}"
+          if [ -z "$BODY" ] || [ "$BODY" == "null" ]; then
+            echo "${{ env.LOG_PREFIX }} ℹ️ PR body is empty"
+            echo "has_issues=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          echo "has_issues=true" >> $GITHUB_OUTPUT
+
+      - name: Extract issue references
+        id: extract
+        if: steps.validate.outputs.has_issues == 'true'
+        run: |
+          echo "${{ env.LOG_PREFIX }} Extracting issue references..."
+          BODY="${{ github.event.pull_request.body }}"
+          ISSUES=$(echo "$BODY" | grep -Eo '([a-zA-Z0-9_\-]+\/[a-zA-Z0-9_\-\.]+)?#[0-9]+' | sort -u)
+          if [ -z "$ISSUES" ]; then
+            echo "count=0" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          ISSUE_COUNT=$(echo "$ISSUES" | wc -l)
+          echo "count=$ISSUE_COUNT" >> $GITHUB_OUTPUT
+          echo "issues<<EOF" >> $GITHUB_OUTPUT
+          echo "$ISSUES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Process issue links
+        if: steps.extract.outputs.count > 0
+        env:
+          GH_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          SOURCE_REPO: ${{ github.repository }}
+          PR_ACTION: ${{ github.event.action }}
+          PR_MERGED: ${{ github.event.pull_request.merged }}
+        run: |
+          set -euo pipefail
+          ISSUES="${{ steps.extract.outputs.issues }}"
+          MARKER="<!-- pr-linker:${PR_URL} -->"
+          PROCESSED=0
+          FAILED=0
+          
+          while IFS= read -r ISSUE; do
+            [ -z "$ISSUE" ] && continue
+            
+            if [[ "$ISSUE" == *"/"* ]]; then
+              REPO=$(echo "$ISSUE" | cut -d'#' -f1)
+              NUMBER=$(echo "$ISSUE" | cut -d'#' -f2)
+            else
+              REPO="$SOURCE_REPO"
+              NUMBER=$(echo "$ISSUE" | cut -d'#' -f2)
+            fi
+            
+            if ! [[ "$NUMBER" =~ ^[0-9]+$ ]]; then
+              echo "Invalid issue number: $NUMBER"
+              ((FAILED++))
+              continue
+            fi
+            
+            COMMENTS_RESPONSE=$(curl -s -w "\n%{http_code}" \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/$REPO/issues/$NUMBER/comments")
+            
+            HTTP_CODE=$(echo "$COMMENTS_RESPONSE" | tail -n1)
+            COMMENTS_BODY=$(echo "$COMMENTS_RESPONSE" | head -n-1)
+            
+            if [ "$HTTP_CODE" != "200" ]; then
+              echo "Failed to fetch comments for $REPO#$NUMBER (HTTP $HTTP_CODE)"
+              ((FAILED++))
+              continue
+            fi
+            
+            COMMENT_ID=$(echo "$COMMENTS_BODY" | jq -r \
+              --arg marker "$MARKER" \
+              '.[] | select(.body | contains($marker)) | .id' 2>/dev/null | head -n 1)
+            
+            BODY_TEXT="🔗 Linked PR\n\n- Title: $PR_TITLE\n- URL: $PR_URL\n- Source: $SOURCE_REPO\n\n$MARKER"
+            
+            if [[ "$PR_ACTION" == "closed" && "$PR_MERGED" == "false" ]]; then
+              if [ -n "$COMMENT_ID" ]; then
+                DELETE_RESPONSE=$(curl -s -w "\n%{http_code}" -X DELETE \
+                  -H "Authorization: Bearer $GH_TOKEN" \
+                  "https://api.github.com/repos/$REPO/issues/comments/$COMMENT_ID")
+                DELETE_CODE=$(echo "$DELETE_RESPONSE" | tail -n1)
+                if [[ "$DELETE_CODE" =~ ^(200|204)$ ]]; then
+                  ((PROCESSED++))
+                else
+                  echo "Failed to delete comment (HTTP $DELETE_CODE)"
+                  ((FAILED++))
+                fi
+              else
+                ((PROCESSED++))
+              fi
+              continue
+            fi
+            
+            if [ -n "$COMMENT_ID" ]; then
+              UPDATE_RESPONSE=$(curl -s -w "\n%{http_code}" -X PATCH \
+                -H "Authorization: Bearer $GH_TOKEN" \
+                "https://api.github.com/repos/$REPO/issues/comments/$COMMENT_ID" \
+                -d "$(jq -n --arg body "$BODY_TEXT" '{body: $body}')")
+              UPDATE_CODE=$(echo "$UPDATE_RESPONSE" | tail -n1)
+              if [[ "$UPDATE_CODE" =~ ^(200|201)$ ]]; then
+                ((PROCESSED++))
+              else
+                ((FAILED++))
+              fi
+            else
+              CREATE_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+                -H "Authorization: Bearer $GH_TOKEN" \
+                "https://api.github.com/repos/$REPO/issues/$NUMBER/comments" \
+                -d "$(jq -n --arg body "$BODY_TEXT" '{body: $body}')")
+              CREATE_CODE=$(echo "$CREATE_RESPONSE" | tail -n1)
+              if [[ "$CREATE_CODE" =~ ^(200|201)$ ]]; then
+                ((PROCESSED++))
+              else
+                ((FAILED++))
+              fi
+            fi
+          done <<< "$ISSUES"
+          
+          if [ $FAILED -gt 0 ]; then
+            exit 1
+          fi
+
+      - name: Handle workflow failure
+        if: failure()
+        run: |
+          echo "${{ env.LOG_PREFIX }} ❌ Workflow failed"
+          echo "${{ env.LOG_PREFIX }} PR: ${{ github.event.pull_request.html_url }}"
+
+      - name: Success summary
+        if: success()
+        run: |
+          echo "${{ env.LOG_PREFIX }} ✅ Workflow completed successfully"
