@@ -1,31 +1,85 @@
-name: WireGuard Onboarding
+name: WireGuard onboard environment
 
 on:
   workflow_dispatch:
     inputs:
       ENV_NAME:
-        description: 'Environment / branch name to onboard'
+        description: 'Environment / branch name to onboard (becomes the GitHub environment name)'
         required: true
         type: string
+      JUMPSERVER_HOST:
+        description: 'WireGuard VM public IP or DNS (SSH reachable)'
+        required: true
+        type: string
+      SSH_PRIVATE_KEY:
+        description: 'Name of the repo secret holding the WG VM SSH private key'
+        required: true
+        type: string
+        default: SSH_PRIVATE_KEY
+      TICKET:
+        description: 'Optional ticket id to record in assigned.txt (e.g. DSD-10264)'
+        required: false
+        type: string
+      WG_DIR:
+        description: 'WireGuard env dir on the VM'
+        required: false
+        type: string
+        default: /home/ubuntu/wireguard_env_2026
+      ALLOWED_IPS:
+        description: 'AllowedIPs to set in each conf'
+        required: false
+        type: string
+        default: 172.31.0.0/16
+      DRY_RUN:
+        description: 'Resolve and print actions without creating env/secrets'
+        required: false
+        type: boolean
+        default: true
 
 jobs:
   onboard:
     runs-on: ubuntu-latest
-
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.PAT_TOKEN }}
 
-      - name: Create SSH key
+      - name: Write SSH private key
         run: |
-          echo "${{ secrets.WG_JUMPSERVER_SSH_KEY }}" > jump.pem
-          chmod 600 jump.pem
+          mkdir -p ~/.ssh
+          echo "${{ secrets[inputs.SSH_PRIVATE_KEY] }}" > ~/.ssh/jumpserver_key
+          chmod 600 ~/.ssh/jumpserver_key
+          if [ ! -s ~/.ssh/jumpserver_key ]; then
+            echo "ERROR: SSH key secret '${{ inputs.SSH_PRIVATE_KEY }}' is empty"
+            exit 1
+          fi
 
-      - name: Run onboarding
+      - name: Run WireGuard onboarding
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
         run: |
           chmod +x .github/workflows/scripts/wg-onboard.sh
-
           .github/workflows/scripts/wg-onboard.sh \
             --env "${{ inputs.ENV_NAME }}" \
-            --host "${{ secrets.WG_JUMPSERVER_HOST }}" \
-            --ssh-key jump.pem \
-            --repo "${{ github.repository }}"
+            --host "${{ inputs.JUMPSERVER_HOST }}" \
+            --ssh-key ~/.ssh/jumpserver_key \
+            --repo "${{ github.repository }}" \
+            --wg-dir "${{ inputs.WG_DIR }}" \
+            --allowed-ips "${{ inputs.ALLOWED_IPS }}" \
+            ${{ inputs.TICKET != '' && format('--ticket {0}', inputs.TICKET) || '' }} \
+            ${{ inputs.DRY_RUN == true && '--dry-run' || '' }}
+
+      - name: Commit updated peer allocation
+        if: ${{ inputs.DRY_RUN == false }}
+        run: |
+          if git diff --quiet; then
+            echo "No allocation change to commit"
+          else
+            git config user.email "${{ github.actor }}@users.noreply.github.com"
+            git config user.name "${{ github.actor }}"
+            git add -A
+            git commit -s -m "wg: allocate peers for environment ${{ inputs.ENV_NAME }}"
+            git push
+          fi
