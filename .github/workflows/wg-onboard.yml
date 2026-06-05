@@ -24,7 +24,7 @@ jobs:
         run: |
           chmod +x scripts/wg-onboard.sh
 
-          ./scripts/wg-onboard.sh \
+          .github/workflows/scripts/wg-onboard.sh \
             --env "${{ inputs.ENV_NAME }}" \
             --host "${{ secrets.WG_JUMPSERVER_HOST }}" \
             --ssh-key jump.pem \
