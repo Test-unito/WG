@@ -46,12 +46,14 @@ jobs:
           token: ${{ secrets.PAT_TOKEN }}
 
       - name: Write SSH private key
+        env:
+          SSH_KEY: ${{ secrets[inputs.SSH_PRIVATE_KEY] }}
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets[inputs.SSH_PRIVATE_KEY] }}" > ~/.ssh/jumpserver_key
+          printf '%s\n' "$SSH_KEY" | tr -d '\r' > ~/.ssh/jumpserver_key
           chmod 600 ~/.ssh/jumpserver_key
-          if [ ! -s ~/.ssh/jumpserver_key ]; then
-            echo "ERROR: SSH key secret '${{ inputs.SSH_PRIVATE_KEY }}' is empty"
+          if ! ssh-keygen -l -f ~/.ssh/jumpserver_key >/dev/null 2>&1; then
+            echo "ERROR: secret '${{ inputs.SSH_PRIVATE_KEY }}' is not a valid private key (check format/newlines/CRLF)"
             exit 1
           fi
 
