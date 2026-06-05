@@ -22,7 +22,7 @@ jobs:
 
       - name: Run onboarding
         run: |
-          chmod +x scripts/wg-onboard.sh
+          chmod +x .github/workflows/scripts/wg-onboard.sh
 
           .github/workflows/scripts/wg-onboard.sh \
             --env "${{ inputs.ENV_NAME }}" \
