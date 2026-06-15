@@ -152,7 +152,7 @@ highest_peer_number() {
 
 if [[ -z "$MAX_PEERS" ]]; then
   detected_max="$(highest_peer_number)"
-  MAX_PEERS=$(( detected_max > 100 ? detected_max : 100 ))
+  MAX_PEERS=$(( detected_max > 100 ? detected_max : 300 ))
 else
   [[ "$MAX_PEERS" =~ ^[0-9]+$ && "$MAX_PEERS" -gt 0 ]] || die "--max-peers must be a positive integer"
 fi
