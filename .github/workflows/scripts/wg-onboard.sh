@@ -128,7 +128,8 @@ fi
 
 CONFIG_DIR="$WG_DIR/config"
 ASSIGNED_FILE="$WG_DIR/assigned.txt"
-ASSIGN_LOCK_FILE="${ASSIGNED_FILE}.lock"
+# Flock lock in /tmp — WG_DIR often cannot create new files (docker/root ownership).
+ASSIGN_LOCK_FILE="/tmp/wg-onboard-$(printf '%s' "$ASSIGNED_FILE" | cksum | awk '{print $1}').lock"
 LABEL="$ENV_NAME"
 [[ -n "$TICKET" ]] && LABEL="${ENV_NAME}(${TICKET})"
 
@@ -474,9 +475,14 @@ run_allocation() {
     "$format" "$reused" "$tf" "$wg0" "$wg1"
 }
 
-exec 9>"$LOCK_FILE"
+exec 9>"$LOCK_FILE" || { echo "ERROR: cannot create allocation lock ($LOCK_FILE)" >&2; exit 1; }
 if ! flock -w 120 9; then
   echo "ERROR: timed out waiting for allocation lock ($LOCK_FILE)" >&2
+  exit 1
+fi
+wg_dir="$(dirname "$ASSIGNED_FILE")"
+if [[ ! -w "$ASSIGNED_FILE" && ! -w "$wg_dir" ]]; then
+  echo "ERROR: cannot write $ASSIGNED_FILE (check ownership/permissions on $wg_dir)" >&2
   exit 1
 fi
 run_allocation
