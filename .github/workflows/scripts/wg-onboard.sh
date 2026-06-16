@@ -176,7 +176,7 @@ highest_config_peer() {
 
 if [[ -z "$MAX_PEERS" ]]; then
   max="$(highest_config_peer)"
-  MAX_PEERS=$(( max > 300 ? max : 300 ))
+  MAX_PEERS=$(( max > 100 ? max : 100 ))
 else
   [[ "$MAX_PEERS" =~ ^[0-9]+$ && "$MAX_PEERS" -gt 0 ]] || die "--max-peers must be a positive integer"
   detected_max="$(highest_config_peer)"
@@ -202,9 +202,13 @@ peer_config_exists() {
 # Runs atomically on the VM before secrets are published (eliminates the race
 # where two workflows read the same free peers and both append assigned.txt).
 atomic_allocate_peers() {
+  # SSH omits empty argv entries; placeholders keep arg positions stable for bash -s.
+  local force_tf="${TF_PEER:-__none__}"
+  local force_wg0="${WG0_PEER:-__none__}"
+  local force_wg1="${WG1_PEER:-__none__}"
   ssh_cmd bash -s \
     "$ASSIGNED_FILE" "$ASSIGN_LOCK_FILE" "$CONFIG_DIR" "$ENV_NAME" "$LABEL" \
-    "$MAX_PEERS" "$TF_PEER" "$WG0_PEER" "$WG1_PEER" "$DRY_RUN" "$CAN_CREATE_PEERS" \
+    "$MAX_PEERS" "$force_tf" "$force_wg0" "$force_wg1" "$DRY_RUN" "$CAN_CREATE_PEERS" \
     <<'REMOTE_ATOMIC_ALLOCATE'
 set -euo pipefail
 
@@ -214,11 +218,14 @@ CONFIG_DIR="$3"
 ENV_NAME="$4"
 LABEL="$5"
 MAX_PEERS="$6"
-FORCE_TF="$7"
-FORCE_WG0="$8"
-FORCE_WG1="$9"
-DRY_RUN="${10}"
-CAN_CREATE="${11}"
+FORCE_TF="${7:-}"
+FORCE_WG0="${8:-}"
+FORCE_WG1="${9:-}"
+[[ "$FORCE_TF" == "__none__" ]] && FORCE_TF=""
+[[ "$FORCE_WG0" == "__none__" ]] && FORCE_WG0=""
+[[ "$FORCE_WG1" == "__none__" ]] && FORCE_WG1=""
+DRY_RUN="${10:-false}"
+CAN_CREATE="${11:-false}"
 
 PARSED_PEER=""
 PARSED_LABEL=""
