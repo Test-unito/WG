@@ -266,23 +266,51 @@ record_assignment() {
   local peer="$1" assignment="$2" format="$3" file="$4"
   local safe_assignment="${assignment//\\/\\\\}"
   safe_assignment="${safe_assignment//&/\\&}"
+  local tmp
+  tmp="$(mktemp)"
   if [[ "$format" == "colon" ]]; then
-    local line="${peer}: ${safe_assignment}"
-    if grep -qE "^${peer}:" "$file"; then
-      sed -i "s|^${peer}:.*|${line}|" "$file"
-    elif grep -qE "^${peer}([[:space:]]|$)" "$file"; then
-      sed -i "s|^${peer}.*|${line}|" "$file"
-    else
-      printf '%s\n' "${peer}: ${assignment}" >> "$file"
-    fi
+    awk -v peer="$peer" -v assignment="$assignment" '
+      BEGIN {
+        replaced=0
+        new_line=peer ": " assignment
+      }
+      $1 ~ ("^" peer ":$") || $1 ~ ("^" peer "$") {
+        if (!replaced) {
+          print new_line
+          replaced=1
+        }
+        next
+      }
+      { print }
+      END {
+        if (!replaced) {
+          print new_line
+        }
+      }
+    ' "$file" > "$tmp"
   else
-    local line="${peer} ${safe_assignment}"
-    if grep -qE "^${peer}([[:space:]]|$)" "$file"; then
-      sed -i "s|^${peer}.*|${line}|" "$file"
-    else
-      printf '%s\n' "${peer} ${assignment}" >> "$file"
-    fi
+    awk -v peer="$peer" -v assignment="$assignment" '
+      BEGIN {
+        replaced=0
+        new_line=peer " " assignment
+      }
+      $1 ~ ("^" peer ":?$") {
+        if (!replaced) {
+          print new_line
+          replaced=1
+        }
+        next
+      }
+      { print }
+      END {
+        if (!replaced) {
+          print new_line
+        }
+      }
+    ' "$file" > "$tmp"
   fi
+  cat "$tmp" > "$file"
+  rm -f "$tmp"
 }
 
 ensure_peer_conf() {
@@ -519,7 +547,8 @@ remove_peer_line() {
   local peer="$1" file="$2" tmp
   tmp="$(mktemp)"
   awk -v p="$peer" '$1 !~ ("^" p ":?$")' "$file" > "$tmp"
-  mv "$tmp" "$file"
+  cat "$tmp" > "$file"
+  rm -f "$tmp"
 }
 
 [[ "$RECORD_TF" == "true"  ]] && remove_peer_line "$TF_PEER" "$ASSIGNED_FILE"
