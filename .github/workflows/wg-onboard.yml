@@ -82,7 +82,7 @@ jobs:
           INPUT_DRY_RUN: ${{ inputs.DRY_RUN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
-          chmod +x .github/scripts/wg-onboard.sh
+          chmod +x .github/workflows/scripts/wg-onboard.sh
           args=(
             --env "$INPUT_ENV_NAME"
             --host "$INPUT_JUMPSERVER_HOST"
@@ -93,7 +93,7 @@ jobs:
           )
           [[ -n "$INPUT_TICKET" ]] && args+=(--ticket "$INPUT_TICKET")
           [[ "$INPUT_DRY_RUN" == "true" ]] && args+=(--dry-run)
-          .github/scripts/wg-onboard.sh "${args[@]}"
+          .github/workflows/scripts/wg-onboard.sh "${args[@]}"
 
       - name: Cleanup SSH private key
         if: always()
