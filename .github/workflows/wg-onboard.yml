@@ -73,6 +73,7 @@ jobs:
           if ((${#missing[@]})); then
             echo "ERROR: Missing repository secrets: ${missing[*]}"
             echo "Add them under Settings → Secrets and variables → Actions for ${GITHUB_REPOSITORY}"
+            echo "Or as Environment secrets on 'wg-lifecycle' (preferred once the gate is live)."
             exit 1
           fi
 
