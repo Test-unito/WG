@@ -59,8 +59,10 @@ concurrency:
 
 jobs:
   wg-env:
-    environment: wg-lifecycle
     runs-on: ubuntu-latest
+    # Human approval before any onboard/offboard work starts.
+    # Configure required reviewers on Environment "wg-lifecycle" in repo Settings.
+    environment: wg-lifecycle
     timeout-minutes: 20
     steps:
       - name: Validate required secrets
